@@ -1,0 +1,3 @@
+.training/*
+.checkpoints/*
+./logs/*
