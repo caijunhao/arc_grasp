@@ -67,9 +67,12 @@ def get_dataset(dataset_dir, num_readers, num_preprocessing_threads, hparams, re
     return colors, depths, labels, label_augs
 
 
-def create_loss(net, labels):
+def create_loss(net, labels, lamb):
+    bad, good, background = tf.unstack(labels, axis=3)
+    mask = lamb * tf.add(bad, good) + background
+    attention_mask = tf.stack([mask, mask, mask], axis=3)
     y = tf.exp(net) / tf.reduce_sum(tf.exp(net), axis=3, keepdims=True)
-    cross_entropy = -tf.reduce_mean(labels * tf.log(y))
+    cross_entropy = -tf.reduce_mean(attention_mask * (labels * tf.log(y)))
     return cross_entropy
 
 
@@ -78,13 +81,16 @@ def add_summary(colors, depths, label_augs, end_points, loss, scope='arcnet'):
     tf.summary.image('colors', colors)
     tf.summary.image('depths', depths)
     tf.summary.image('label_augs', label_augs)
-    for i in range(1, 3):
-        for j in range(64):
-            tf.summary.image(scope + '/conv{}' + '_{}'.format(i, j),
-                             end_points[scope + '/conv{}'.format(i)][0:1, :, :, j:j + 1])
+    # for i in range(1, 3):
+    #     for j in range(64):
+    #         tf.summary.image(scope + '/conv{}' + '_{}'.format(i, j),
+    #                          end_points[scope + '/conv{}'.format(i)][0:1, :, :, j:j + 1])
+    tf.summary.image(scope + '/conv3', end_points[scope + '/conv3'])
+    net = end_points['logits']
+    tf.summary.image('inference_map', tf.exp(net) / tf.reduce_sum(tf.exp(net), axis=3, keepdims=True))
     variable_list = slim.get_model_variables()
     for var in variable_list:
-        tf.summary.histogram(var.name, var)
+        tf.summary.histogram(var.name[:-2], var)
 
 
 def restore_map():
