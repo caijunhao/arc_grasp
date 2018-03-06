@@ -72,7 +72,7 @@ def create_loss(net, labels, lamb):
     mask = lamb * tf.add(bad, good) + background
     attention_mask = tf.stack([mask, mask, mask], axis=3)
     y = tf.exp(net) / tf.reduce_sum(tf.exp(net), axis=3, keepdims=True)
-    cross_entropy = -tf.reduce_mean(attention_mask * (labels * tf.log(y)))
+    cross_entropy = -tf.reduce_mean(attention_mask * (labels * tf.log(tf.clip_by_value(y, 0.001, 0.999))))
     return cross_entropy
 
 
