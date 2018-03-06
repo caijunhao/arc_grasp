@@ -7,7 +7,7 @@ import tensorflow.contrib.slim as slim
 
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 parser = argparse.ArgumentParser(description='network training')
 parser.add_argument('--master', default='', type=str, help='BNS name of the TensorFlow master to use')
@@ -22,7 +22,7 @@ parser.add_argument('--save_interval_secs', default=600, type=int, help='The fre
 parser.add_argument('--print_loss_steps', default=100, type=int, help='The frequency with which '
                                                                       'the losses are printed, in steps.')
 parser.add_argument('--dataset_dir', default='', type=str, help='The directory where the datasets can be found.')
-parser.add_argument('--num_readers', default=4, type=int, help='The number of parallel readers '
+parser.add_argument('--num_readers', default=2, type=int, help='The number of parallel readers '
                                                                'that read data from the dataset.')
 parser.add_argument('--num_steps', default=1000000, type=int, help='The max number of gradient steps to take '
                                                                    'during training.')
@@ -63,11 +63,11 @@ def main():
                                     color_scope='color_tower',
                                     depth_scope='depth_tower',
                                     scope='arcnet')
-            loss = create_loss(net, label_augs)
+            loss = create_loss(net, label_augs, hparams.lamb)
             learning_rate = hparams.learning_rate
             if hparams.lr_decay_step:
                 learning_rate = tf.train.exponential_decay(hparams.learning_rate,
-                                                           slim.get_or_create_global_step(),
+                                                           tf.train.get_or_create_global_step(),
                                                            decay_steps=hparams.lr_decay_step,
                                                            decay_rate=hparams.lr_decay_rate,
                                                            staircase=True)
@@ -76,7 +76,7 @@ def main():
             train_op = slim.learning.create_train_op(loss, optimizer)
             add_summary(colors, depths, label_augs, end_points, loss, scope='arcnet')
             summary_op = tf.summary.merge_all()
-            if args.from_arcnet_checkpoint:
+            if not args.from_arcnet_checkpoint:
                 color_variable_map, depth_variable_map = restore_from_classification_checkpoint(
                     color_scope='color_tower',
                     depth_scope='depth_tower',
@@ -96,7 +96,7 @@ def main():
                 init_saver = tf.train.Saver(variable_map)
 
                 def initializer_fn(sess):
-                    init_saver.restore(sess, args.checkpoint_dir)
+                    init_saver.restore(sess, tf.train.latest_checkpoint(args.checkpoint_dir))
                     tf.logging.info('Successfully load pretrained checkpoint.')
 
                 init_fn = initializer_fn
