@@ -23,7 +23,14 @@ def encode_depth(depth):
     return encoded_depth
 
 
-def get_dataset(dataset_dir, num_readers, num_preprocessing_threads, hparams, reader=None):
+def get_dataset(dataset_dir,
+                num_readers,
+                num_preprocessing_threads,
+                hparams,
+                reader=None,
+                shuffle=True,
+                num_epochs=None,
+                is_training=True):
     dataset_dir_list = [os.path.join(dataset_dir, filename)
                         for filename in os.listdir(dataset_dir) if filename.endswith('.tfrecord')]
     if reader is None:
@@ -49,6 +56,8 @@ def get_dataset(dataset_dir, num_readers, num_preprocessing_threads, hparams, re
                                    items_to_descriptions=None)
     provider = slim.dataset_data_provider.DatasetDataProvider(dataset,
                                                               num_readers=num_readers,
+                                                              shuffle=shuffle,
+                                                              num_epochs=num_epochs,
                                                               common_queue_capacity=20 * hparams.batch_size,
                                                               common_queue_min=10 * hparams.batch_size)
     color, encoded_depth, label, label_aug = provider.get(['color', 'encoded_depth', 'label', 'label_aug'])
@@ -59,11 +68,16 @@ def get_dataset(dataset_dir, num_readers, num_preprocessing_threads, hparams, re
     depth = tf.stack([depth, depth, depth], axis=2)
     label = tf.cast(label, tf.float32)
     label_aug = tf.cast(label_aug, tf.float32)
-
-    colors, depths, labels, label_augs = tf.train.batch([color, depth, label, label_aug],
-                                                        batch_size=hparams.batch_size,
-                                                        num_threads=num_preprocessing_threads,
-                                                        capacity=5*hparams.batch_size)
+    if is_training:
+        colors, depths, labels, label_augs = tf.train.batch([color, depth, label, label_aug],
+                                                            batch_size=hparams.batch_size,
+                                                            num_threads=num_preprocessing_threads,
+                                                            capacity=5*hparams.batch_size)
+    else:
+        colors = tf.expand_dims(color, axis=0)
+        depths = tf.expand_dims(depth, axis=0)
+        labels = tf.expand_dims(label, axis=0)
+        label_augs = tf.expand_dims(label_aug, axis=0)
     return colors, depths, labels, label_augs
 
 
@@ -73,6 +87,15 @@ def create_loss(net, labels, lamb):
     attention_mask = tf.stack([mask, mask, mask], axis=3)
     y = tf.exp(net) / tf.reduce_sum(tf.exp(net), axis=3, keepdims=True)
     cross_entropy = -tf.reduce_mean(attention_mask * (labels * tf.log(tf.clip_by_value(y, 0.001, 0.999))))
+    return cross_entropy
+
+
+def create_loss_without_background(net, labels):
+    bad, good, background = tf.unstack(labels, axis=3)
+    background = tf.zeros_like(background, dtype=tf.float32)
+    labels = tf.stack([bad, good, background], axis=3)
+    y = tf.exp(net) / tf.reduce_sum(tf.exp(net), axis=3, keepdims=True)
+    cross_entropy = -tf.reduce_mean(labels * tf.log(tf.clip_by_value(y, 0.001, 0.999)))
     return cross_entropy
 
 
@@ -99,11 +122,13 @@ def restore_map():
     return variables_to_restore
 
 
-def restore_from_classification_checkpoint(color_scope, depth_scope, model_name, checkpoint_exclude_scope):
+def restore_from_classification_checkpoint(color_scope, depth_scope, model_name, checkpoint_exclude_scopes):
     color_variable_list = slim.get_model_variables(color_scope)
-    color_variable_list = [var for var in color_variable_list if checkpoint_exclude_scope not in var.op.name]
+    for checkpoint_exclude_scope in checkpoint_exclude_scopes:
+        color_variable_list = [var for var in color_variable_list if checkpoint_exclude_scope not in var.op.name]
     depth_variable_list = slim.get_model_variables(depth_scope)
-    depth_variable_list = [var for var in depth_variable_list if checkpoint_exclude_scope not in var.op.name]
+    for checkpoint_exclude_scope in checkpoint_exclude_scopes:
+        depth_variable_list = [var for var in depth_variable_list if checkpoint_exclude_scope not in var.op.name]
     color_variables_to_restore = {}
     depth_variables_to_restore = {}
     for var in color_variable_list:
