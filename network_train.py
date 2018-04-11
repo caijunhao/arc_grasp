@@ -1,5 +1,5 @@
 from hparams import create_hparams
-from network_utils import get_dataset, create_loss, add_summary, restore_map, restore_from_classification_checkpoint
+from network_utils import *
 from model import model
 
 import tensorflow as tf
@@ -7,7 +7,7 @@ import tensorflow.contrib.slim as slim
 
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 parser = argparse.ArgumentParser(description='network training')
 parser.add_argument('--master', default='', type=str, help='BNS name of the TensorFlow master to use')
@@ -24,7 +24,7 @@ parser.add_argument('--print_loss_steps', default=100, type=int, help='The frequ
 parser.add_argument('--dataset_dir', default='', type=str, help='The directory where the datasets can be found.')
 parser.add_argument('--num_readers', default=2, type=int, help='The number of parallel readers '
                                                                'that read data from the dataset.')
-parser.add_argument('--num_steps', default=1000000, type=int, help='The max number of gradient steps to take '
+parser.add_argument('--num_steps', default=200000, type=int, help='The max number of gradient steps to take '
                                                                    'during training.')
 parser.add_argument('--num_preprocessing_threads', default=4, type=int, help='The number of threads '
                                                                              'used to create the batches.')
@@ -41,7 +41,7 @@ def main():
     hparams = create_hparams()
     for path in [args.train_log_dir]:
         if not tf.gfile.Exists(path):
-            tf.gfile.Makedirs(path)
+            tf.gfile.MakeDirs(path)
     hparams_filename = os.path.join(args.train_log_dir, 'hparams.json')
     with tf.gfile.FastGFile(hparams_filename, 'w') as f:
         f.write(hparams.to_json())
@@ -63,7 +63,8 @@ def main():
                                     color_scope='color_tower',
                                     depth_scope='depth_tower',
                                     scope='arcnet')
-            loss = create_loss(net, label_augs, hparams.lamb)
+            loss = create_loss(net, labels, hparams.lamb)
+            # loss = create_loss_without_background(net, labels)
             learning_rate = hparams.learning_rate
             if hparams.lr_decay_step:
                 learning_rate = tf.train.exponential_decay(hparams.learning_rate,
@@ -74,14 +75,14 @@ def main():
             tf.summary.scalar('Learning_rate', learning_rate)
             optimizer = tf.train.GradientDescentOptimizer(learning_rate)
             train_op = slim.learning.create_train_op(loss, optimizer)
-            add_summary(colors, depths, label_augs, end_points, loss, scope='arcnet')
+            add_summary(colors, depths, labels, end_points, loss, scope='arcnet')
             summary_op = tf.summary.merge_all()
             if not args.from_arcnet_checkpoint:
                 color_variable_map, depth_variable_map = restore_from_classification_checkpoint(
                     color_scope='color_tower',
                     depth_scope='depth_tower',
                     model_name=hparams.model_name,
-                    checkpoint_exclude_scope='arcnet')
+                    checkpoint_exclude_scopes=['arcnet'])
                 color_saver = tf.train.Saver(color_variable_map)
                 depth_saver = tf.train.Saver(depth_variable_map)
 
