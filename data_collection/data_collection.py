@@ -43,7 +43,33 @@ def get_center_point(image, mtx, width, height):
     # 将轮廓信息转换成(x, y)坐标，并加上矩形的高度和宽度
     rectangle_list = [cv2.boundingRect(contour) for contour in contours if cv2.contourArea(contour) > 200]
     center_points = [[bbox[0]+bbox[2]/2, bbox[1]+bbox[3]/2] for bbox in rectangle_list]
-    return random.choice(center_points)
+    return random.choice(center_points)[::-1]  # [width, height]
+
+
+def get_label(center_point, theta, position, ratio=2):
+    gripper_ratio = 85.0 / 255.0
+    width = gripper_ratio * position / ratio
+    c_h = center_point[0]
+    c_w = center_point[1]
+    h = [delta_h for delta_h in range(-5, 6)]
+    w = [-width / 2, width / 2]
+    points = np.asanyarray([[hh, w[0], hh, w[1]] for hh in h])
+    rotate_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                              [np.sin(theta), np.cos(theta)]])
+    points[:, 0:2] = np.dot(rotate_matrix, points[:, 0:2].T).T
+    points[:, 2:] = np.dot(rotate_matrix, points[:, 2:].T).T
+    points = points + np.asanyarray([[c_h, c_w, c_h, c_w]])
+    points = np.floor(points).astype(np.int)
+    return points
+
+
+def draw_label(points, width, height, color=(0, 255, 0)):
+    label = np.ones((height, width, 3), dtype=np.uint8) * 255
+    for point in points:
+        pt1 = (point[1], point[0])
+        pt2 = (point[3], point[2])
+        cv2.line(label, pt1, pt2, color)
+    return label
 
 
 def main():
@@ -53,7 +79,7 @@ def main():
     rob.set_payload(0.5, (0, 0, 0))
     gripper = urx.RobotiqGripper(port=args.port)
     gripper.activation_request()
-    gripper.set_speed(0xFF)
+    gripper.set_speed(0x80)
     gripper.set_force(0xFF)
     # initialize realsense
     pipeline = rs.pipeline()
@@ -69,11 +95,12 @@ def main():
     # load configuration
     camera_location = np.loadtxt(args.camera_location)
     rob.movel(camera_location, acc=args.a, vel=args.v)
-
+    init_angle = rob.getj()[-1]
     origin = np.loadtxt(args.origin)
     mtx = np.loadtxt(args.projection_matrix)
+
     try:
-        while True:
+        for i in range(10):
             # align the depth frame to color frame
             frames = pipeline.wait_for_frames()
             aligned_frames = align.process(frames)
@@ -81,21 +108,25 @@ def main():
             depth_frame = aligned_frames.get_depth_frame()
             color_img = np.asanyarray(color_frame.get_data())
             depth_img = np.asanyarray(depth_frame.get_data())
+            warp_color_img = cv2.warpPerspective(color_img, mtx, (args.width, args.height))
+            warp_depth_img = cv2.warpPerspective(depth_img, mtx, (args.width, args.height))
             # get center point of object chosen among objects seen by the camera
             center_point = get_center_point(color_img, mtx, args.width, args.height)
 
             episode = []
             # approach to the target pose
             pose1 = copy.deepcopy(origin)
-            pose1[0] += center_point[1] * args.ratio
-            pose1[1] += center_point[0] * args.ratio
+            pose1[0] += center_point[0] * args.ratio  # height
+            pose1[1] += center_point[1] * args.ratio  # width
             pose1[2] += args.hover_distance
             rob.movel(pose1, acc=args.a, vel=args.v)
             episode.append(pose1)
 
             # rotate end effector angle
             joint_angle = rob.getj()
-            joint_angle[-1] = np.random.uniform(0, np.pi)
+            delta = np.random.uniform(0, np.pi)
+            angle = init_angle + delta
+            joint_angle[-1] = angle
             rob.movej(joint_angle, args.a, args.v)
             pose2 = rob.getl()
             episode.append(pose2)
@@ -110,64 +141,71 @@ def main():
             gripper.gripper_close()
             rob.movel(pose2, acc=args.a, vel=args.v)
             status = gripper.get_object_detection_status()
+            position = gripper.get_gripper_pos()
 
-            while status == 1 or status == 2:
-                rob.movel(episode[2], acc=args.a, vel=args.v)
+            if (status == 1 or status == 2) and position < 217:
+                rob.movel(pose3, acc=args.a, vel=args.v)
                 gripper.gripper_open()
-                rob.movel(episode[1], acc=args.a, vel=args.v)
+                rob.movel(pose2, acc=args.a, vel=args.v)
                 rob.movel(camera_location, acc=args.a, vel=args.v)
-                frames = pipeline.wait_for_frames()
-                aligned_frames = align.process(frames)
-                color_frame = aligned_frames.first(rs.stream.color)
-                depth_frame = aligned_frames.get_depth_frame()
-                color_img = np.asanyarray(color_frame.get_data())
-                depth_img = np.asanyarray(depth_frame.get_data())
-                rob.movel(episode[0], acc=args.a, vel=args.v)
-                rob.movel(episode[1], acc=args.a, vel=args.v)
-                rob.movel(episode[2], acc=args.a, vel=args.v)
-                gripper.gripper_close()
+                for j in range(2):
+                    frames = pipeline.wait_for_frames()
+                    aligned_frames = align.process(frames)
+                    color_frame = aligned_frames.first(rs.stream.color)
+                    depth_frame = aligned_frames.get_depth_frame()
+                    color_img = np.asanyarray(color_frame.get_data())
+                    depth_img = np.asanyarray(depth_frame.get_data())
+                    warp_color_img = cv2.warpPerspective(color_img, mtx, (args.width, args.height))
+                    warp_depth_img = cv2.warpPerspective(depth_img, mtx, (args.width, args.height))
+                    cv2.imwrite('color/{:06d}_{:06d}.png'.format(i, j), color_img)
+                    cv2.imwrite('depth/{:06d}_{:06d}.png'.format(i, j), depth_img)
+                    cv2.imwrite('height_map_color/{:06d}_{:06d}.png'.format(i, j), warp_color_img)
+                    cv2.imwrite('height_map_depth/{:06d}_{:06d}.png'.format(i, j), warp_depth_img)
+                    points = get_label(center_point, -delta, 256-position)
+                    label = draw_label(points, args.width, args.height)
+                    cv2.imwrite('label/{:06d}_{:06d}.png'.format(i, j), label)
+                    np.savetxt('label/{:06d}_{:06d}.good.txt'.format(i, j), points)
 
-                pose4 = copy.deepcopy(origin)
-                pose4[0] += np.random.randint(20, args.height - 20) * args.ratio
-                pose4[1] += np.random.randint(20, args.width - 20) * args.ratio
-                pose4[2] += args.hover_distance
-                rob.movel(pose4, acc=args.a, vel=args.v)
-                episode[0] = pose4
+                    rob.movel(episode[0], acc=args.a, vel=args.v)
+                    rob.movel(episode[1], acc=args.a, vel=args.v)
+                    rob.movel(episode[2], acc=args.a, vel=args.v)
+                    gripper.gripper_close()
 
-                joint_angle = rob.getj()
-                joint_angle[-1] = np.random.uniform(0, np.pi)
-                rob.movej(joint_angle, args.a, args.v)
-                pose5 = rob.getl()
-                episode[1] = pose5
+                    pose4 = copy.deepcopy(origin)
+                    center_point = [np.random.randint(27, args.height - 27), np.random.randint(27, args.width - 27)]
+                    pose4[0] += center_point[0] * args.ratio
+                    pose4[1] += center_point[1] * args.ratio
+                    pose4[2] += args.hover_distance
+                    rob.movel(pose4, acc=args.a, vel=args.v)
+                    episode[0] = pose4
 
-                pose6 = rob.getl()
-                pose6[2] -= args.hover_distance
-                rob.movel(pose6, acc=args.a, vel=args.v)
-                episode[2] = pose6
+                    joint_angle = rob.getj()
+                    delta = np.random.uniform(0, np.pi)
+                    angle = init_angle + delta
+                    joint_angle[-1] = angle
+                    rob.movej(joint_angle, args.a, args.v)
+                    pose5 = rob.getl()
+                    episode[1] = pose5
 
-                rob.movel(pose5, acc=args.a, vel=args.v)
-                status = gripper.get_object_detection_status()
+                    pose6 = rob.getl()
+                    pose6[2] -= args.hover_distance
+                    rob.movel(pose6, acc=args.a, vel=args.v)
+                    episode[2] = pose6
 
-                # # move to a new position
-                # pose4 = copy.deepcopy(origin)
-                # pose4[0] += np.random.randint(20, args.height - 20) * args.ratio
-                # pose4[1] += np.random.randint(20, args.width - 20) * args.ratio
-                # pose4[2] += args.hover_distance
-                # rob.movel(pose4, acc=args.a, vel=args.v)
-                # # randomly rotate end effector angle
-                # joint_angle = rob.getj()
-                # joint_angle[-1] = np.random.uniform(0, np.pi)
-                # rob.movej(joint_angle, args.a, args.v)
-                # pose4 = rob.getl()
-                # # reach to new position
-                # pose5 = rob.getl()
-                # pose5[2] -= args.hover_distance
-                # rob.movel(pose5, acc=args.a, vel=args.v)
-                # gripper.gripper_open()
-                # rob.movel(camera_location, acc=args.a, vel=args.v)
-
-            gripper.gripper_open()
-            rob.movel(camera_location, acc=args.a, vel=args.v)
+                    gripper.gripper_open()
+                    rob.movel(episode[1], acc=args.a, vel=args.v)
+                    rob.movel(camera_location, acc=args.a, vel=args.v)
+            elif (status == 0 or status == 3) and position > 217:
+                cv2.imwrite('color/{:06d}_{:06d}.png'.format(i, 0), color_img)
+                cv2.imwrite('depth/{:06d}_{:06d}.png'.format(i, 0), depth_img)
+                cv2.imwrite('height_map_color/{:06d}_{:06d}.png'.format(i, 0), warp_color_img)
+                cv2.imwrite('height_map_depth/{:06d}_{:06d}.png'.format(i, 0), warp_depth_img)
+                points = get_label(center_point, -delta, 256)
+                label = draw_label(points, args.width, args.height, (0, 0, 255))
+                cv2.imwrite('label/{:06d}_{:06d}.png'.format(i, 0), label)
+                np.savetxt('label/{:06d}_{:06d}.bad.txt'.format(i, 0), points)
+                gripper.gripper_open()
+                rob.movel(camera_location, acc=args.a, vel=args.v)
 
     finally:
         rob.close()
