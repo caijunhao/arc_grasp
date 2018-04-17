@@ -7,7 +7,7 @@ import numpy as np
 
 import argparse
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 parser = argparse.ArgumentParser(description='network evaluating')
 parser.add_argument('--dataset_dir', default='', type=str, help='The directory where the datasets can be found.')
@@ -52,7 +52,7 @@ def main():
             sample_result, sample_label = sess.run([probability_map, label_augs])
             if np.sum((sample_label[..., 0:2])) == 0:
                 continue
-            threshold = np.max(sample_result[..., 1]) - 0.0001
+            threshold = np.max(sample_result[..., 1]) - 0.001
             sample_tp = (sample_result[..., 1] > threshold) & (sample_label[..., 1] == 1)
             sample_fp = (sample_result[..., 1] > threshold) & (sample_label[..., 0] == 1)
             sample_tn = (sample_result[..., 1] <= threshold) & (sample_label[..., 0] == 1)

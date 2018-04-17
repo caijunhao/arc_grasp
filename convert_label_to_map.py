@@ -11,10 +11,10 @@ args = parser.parse_args()
 
 
 def convert_label_to_map(label):
-    r = (label == 0).astype(np.uint8)  # bad grasp point
-    g = (label == 128).astype(np.uint8)  # good grasp point
-    b = (label == 255).astype(np.uint8)  # background
-    label_map = np.stack([b, g, r], axis=2)
+    bad = (label == 0).astype(np.uint8)  # bad grasp point
+    good = (label == 128).astype(np.uint8)  # good grasp point
+    background = (label == 255).astype(np.uint8)  # background
+    label_map = np.stack([bad, good, background], axis=2)
     return label_map
 
 

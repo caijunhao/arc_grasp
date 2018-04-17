@@ -7,7 +7,7 @@ import os
 import dataset_utils
 
 parser = argparse.ArgumentParser(description='create tensorflow record')
-parser.add_argument('--set', default='train-processed-split', type=str, help='Convert train or test set.')
+parser.add_argument('--set', default='test-processed-split', type=str, help='Convert train or test set.')
 parser.add_argument('--data_path', default='training', type=str, help='Path to data set.')
 args = parser.parse_args()
 
@@ -37,7 +37,7 @@ def main():
     with open(os.path.join(args.data_path, args.set+'.txt'), 'r') as f:
         file_list = f.readlines()
     random.shuffle(file_list)
-    writer = tf.python_io.TFRecordWriter(os.path.join(args.data_path, 'train.tfrecord'))
+    writer = tf.python_io.TFRecordWriter(os.path.join(args.data_path, 'test.tfrecord'))
     for file_name in file_list:
         tf_example = dict_to_tf_example(file_name[:-1])
         writer.write(tf_example.SerializeToString())

@@ -3,7 +3,7 @@ import tensorflow as tf
 
 def create_hparams(hparam_string=None):
     hparams = tf.contrib.training.HParams(learning_rate=0.001,
-                                          lr_decay_step=10000,
+                                          lr_decay_step=100000,
                                           lr_decay_rate=0.97,
                                           lamb=15.0,
                                           batch_size=8,
