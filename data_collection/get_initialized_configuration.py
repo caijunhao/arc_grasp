@@ -13,6 +13,7 @@ parser.add_argument('--a', default=0.3, type=float, help='tool acceleration [m/s
 parser.add_argument('--v', default=0.05, type=float, help='tool speed [m/s]')
 parser.add_argument('--width', default=200, type=int, help='width of crop image')
 parser.add_argument('--height', default=200, type=int, help='height of crop image')
+parser.add_argument('--z_scale', default=1.34, type=float, help='z-scale factor')
 args = parser.parse_args()
 
 
@@ -35,7 +36,7 @@ def main():
     pipeline.start(config)
     align = rs.align(rs.stream.color)
     # do nothing, just omit first 17 frames
-    i = 17
+    i = 57
     while i:
         _ = pipeline.wait_for_frames()
         i -= 1
@@ -44,7 +45,8 @@ def main():
     color_frame = aligned_frames.first(rs.stream.color)
     depth_frame = aligned_frames.get_depth_frame()
     color_img = np.asanyarray(color_frame.get_data())
-    depth_img = np.asanyarray(depth_frame.get_data())
+    depth_img = (np.asanyarray(depth_frame.get_data()) * args.z_scale).astype(np.uint16)
+
     cv2.imwrite('background_color.png', color_img)
     cv2.imwrite('background_depth.png', depth_img)
 
@@ -78,7 +80,11 @@ def main():
                       [args.width - 1, args.height - 1],
                       [0, args.height - 1]])
     mtx = cv2.getPerspectiveTransform(src, dst)
+    warp_color_img = cv2.warpPerspective(color_img, mtx, (args.width, args.height))
+    warp_depth_img = cv2.warpPerspective(depth_img, mtx, (args.width, args.height))
     np.savetxt('projection_matrix.txt', mtx)
+    cv2.imwrite('background_color_height_map.png', warp_color_img)
+    cv2.imwrite('background_depth_height_map.png', warp_depth_img)
     cv2.destroyWindow('raw image')
     pipeline.stop()
     rob.close()
